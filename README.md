@@ -5,7 +5,7 @@ A conversational AI that impersonates Richard P. Feynman — Nobel Prize-winning
 Built with **Google Gemini 2.5 Flash**, **ChromaDB**, **Sentence Transformers**, and **RAG** (Retrieval-Augmented Generation) — grounded in Feynman's actual books, lectures, papers, and interviews.
 
 <p align="left">
-  <a href="https://colab.research.google.com/github/your-username/feynman-twin/blob/main/Feynman_Twin_main.ipynb">
+  <a href="https://colab.research.google.com/github/uday-raj-malik/feynman-twin/blob/main/Feynman_Twin_main.ipynb">
     <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
   </a>
 </p>
