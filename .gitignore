@@ -1,0 +1,32 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python compiled cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Vector Databases (Local ChromaDB directories)
+chroma_db/
+test_chroma_db/
+
+# Local session memory files
+memory/long_term_memory.json
+memory/long_term_memory (1).json
+
+# Environment variables & secrets
+.env
+.env.local
+
+# Jupyter / Google Colab checkpoints
+.ipynb_checkpoints/
+.streamlit/config.toml
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

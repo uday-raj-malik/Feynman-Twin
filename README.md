@@ -96,23 +96,66 @@ All source material is available in the shared [Google Drive folder](https://dri
 
 ## 🚀 Getting Started
 
-### 1. Open in Google Colab
+You can run the Feynman Digital Twin in two ways: via a **Local Streamlit Web Application (Recommended)** or via **Google Colab**.
 
-Click the badge below — the notebook opens directly in Colab with no setup needed:
+---
+
+### Option A: Local Streamlit Web App 🌐 (Recommended)
+
+Run the application locally on your computer with a premium dark-themed web chat interface and live memory dashboard.
+
+#### 1. Setup Data Directory
+Ensure you have downloaded the `data/` directory containing all Feynman documents (`books`, `interviews`, `lectures`, `papers`) and placed it directly inside the project root folder.
+
+#### 2. Create and Activate Virtual Environment
+Open your terminal in the project directory and run:
+
+**Windows (PowerShell):**
+```powershell
+python -m venv venv
+.\venv\Scripts\pip install -r requirements.txt
+```
+
+**macOS/Linux:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+#### 3. Run the Web App
+Start the Streamlit server:
+
+**Windows:**
+```powershell
+.\venv\Scripts\streamlit run app.py
+```
+
+**macOS/Linux:**
+```bash
+streamlit run app.py
+```
+
+#### 4. Configure & Ingest
+1. Open the URL shown in your terminal (usually **[http://localhost:8501](http://localhost:8501)**).
+2. Enter your Gemini API key in the sidebar text input. (Get a free key from [Google AI Studio](https://aistudio.google.com/)).
+3. Click the **"🚀 Ingest Data Directory"** button in the sidebar to build the local vector store (ChromaDB) from your `data/` files. This takes about 1-2 minutes.
+4. Once completed, start chatting!
+
+---
+
+### Option B: Run in Google Colab 📓
+
+#### 1. Open Notebook
+Click the badge below to load the notebook directly in Colab:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/uday-raj-malik/feynman-twin/blob/main/Feynman_Twin_main.ipynb)
 
-### 2. Copy the data to your Drive
-
+#### 2. Set Up Google Drive Data
 Open the shared [Google Drive folder](https://drive.google.com/drive/folders/1RTU6cfxkqf_yt2DMIj3pMuMQFTGZnmAG?usp=sharing), click **"Add shortcut to Drive"** (or copy the folder) so it's accessible at `MyDrive/feynman-twin/data/`.
 
-### 3. Get a Gemini API key
-
-Go to [Google AI Studio](https://aistudio.google.com/) → **Get API key**. It's free.
-
-### 4. Run all cells
-
-The notebook installs dependencies, mounts Drive, prompts for your API key, builds the vector store, and launches the chat — all in order, top to bottom.
+#### 3. Execution
+Run all notebook cells top-to-bottom. The cells will automatically install packages, mount Google Drive, prompt you to input your Gemini API Key, build the vector store, and launch an interactive CLI chat loop.
 
 ---
 

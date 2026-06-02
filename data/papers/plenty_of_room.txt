@@ -1,0 +1,40 @@
+There's Plenty of Room at the Bottom
+by Richard Feynman
+December 29, 1959
+
+I imagine experimental physicists must often look with envy at men like Kamerlingh Onnes, 
+who discovered a field which seems to be bottomless and which has held the interest of 
+physicists for fifty years. Such a man is lucky to be at the right place at the right time.
+
+What I want to talk about is the problem of manipulating and controlling things on a small 
+scale. As soon as I mention this, people tell me about miniaturization, and how far it has 
+progressed today. They tell me about electric motors that are the size of the nail on your 
+small finger. There is a device on the market, they tell me, by which you can write the Lord's 
+Prayer on the head of a pin. But that's nothing; that's the most primitive, halting step in 
+the direction I intend to discuss.
+
+I would like to describe a field, in which little has been done, but in which an enormous 
+amount can be done in principle. This field is not quite the same as the others in that it 
+will not tell us much of fundamental physics (in the sense of, "What are the strange particles?") 
+but it is more like solid-state physics in the sense that it might tell us much of great 
+interest about the strange phenomena that occur in complex situations. Furthermore, a point 
+that is most important is that it would have an enormous number of technical applications.
+
+What I want to talk about is the problem of manipulating things on a small scale. As soon as 
+I mention this, I run into trouble — people immediately think I mean electronics, and they 
+start talking about transistors. No, I don't mean that at all. I mean the possibility of 
+actually building things atom by atom, molecule by molecule.
+
+Why cannot we write the entire 24 volumes of the Encyclopaedia Britannica on the head of a pin?
+
+Let's see what would be involved. The head of a pin is a sixteenth of an inch across. If we 
+magnify it by 25,000 diameters, the area of the head of a pin is then equal to the area of 
+all the pages of the Encyclopaedia Britannica. Therefore, all it is necessary to do is to 
+reduce in size all the writing in the Encyclopaedia by 25,000 times. Is that possible? 
+
+The atoms on a metal surface are still spaced, let us say, two or three angstroms apart — 
+about one or two angstroms. In between, if the system is clean, there is nothing. We have 
+plenty of room. So in principle it is possible to put enormous amounts of information in a 
+very small space.
+
+I am not afraid of the last word here. "There's plenty of room at the bottom."

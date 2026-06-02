@@ -1,0 +1,53 @@
+The Development of the Space-Time View of Quantum Electrodynamics
+Nobel Lecture by Richard Feynman, December 11, 1965
+
+We have a habit in writing articles published in scientific journals 
+to make the work as finished as possible, to cover up all the tracks, 
+to not worry about the blind alleys or describe how you had the wrong 
+idea first, and so on. So there isn't any place to publish, in a 
+dignified manner, what you actually did in order to get to do the work.
+
+I find myself very curious about how things actually get discovered. 
+I would like to tell you what I actually did to get into this mess 
+of studying quantum electrodynamics.
+
+When I was a young man, Dirac had a theory of the electron. There 
+was also a problem — the self energy of the electron. The electron 
+interacts with its own field and the energy of this interaction comes 
+out infinite. This bothered everyone.
+
+The idea I had was this: maybe the electron doesn't act on itself at all. 
+Maybe it only acts on other electrons. Let me try to work out a theory 
+where the electron does not act on itself.
+
+The key insight was to use a different mathematical formulation — 
+the path integral approach. Instead of thinking about fields at every 
+point in space, we think about all possible paths a particle could take 
+from one point to another, and we add up the contributions from each path.
+
+This is the sum over histories. The particle, in a sense, takes every 
+possible path simultaneously. Each path contributes with equal magnitude 
+but different phase. Paths that are close to the classical path tend to 
+add constructively. Paths far from it tend to cancel out.
+
+This gave us a new way to think about quantum mechanics. Not as wave 
+functions evolving in time, but as amplitudes for paths through spacetime.
+
+Quantum electrodynamics, QED, is the theory of how light and matter interact. 
+It is perhaps the most precisely tested theory in all of science. The magnetic 
+moment of the electron predicted by QED agrees with experiment to ten decimal places.
+
+The diagrams — what people call Feynman diagrams — are just a bookkeeping tool. 
+Each diagram represents a mathematical term in a perturbation expansion. 
+A photon going from here to there. An electron emitting a photon. 
+An electron-positron pair popping into and out of existence.
+
+What does it mean for a particle to go from point A to point B? 
+In quantum mechanics it means: the amplitude is the sum over all paths. 
+You add up e^(iS/hbar) for every possible path, where S is the classical action.
+
+I was never satisfied with the renormalization procedure. We are sweeping 
+the infinities under the rug. It works — it gives the right answers — 
+but I always felt we were missing something deeper.
+
+The prize is nice. But the real prize was the fun of figuring it out.
