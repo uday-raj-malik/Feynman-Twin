@@ -1,0 +1,139 @@
+FEYNMAN DIGITAL TWIN — APPROACH & DESIGN DECISIONS
+====================================================
+
+
+
+
+WHY THIS PROJECT EXISTS
+------------------------
+
+The goal was simple: build a chatbot that talks like Feynman. But the moment
+you think about it seriously, the problem gets deeper. Just prompting an LLM
+to "sound like Feynman" produces something that mimics his phrasing without
+any of the actual substance. Responses feel hollow fast.
+
+The real challenge is keeping the system tethered to what Feynman actually
+wrote and believed, while still making the conversation feel natural. Every
+architectural decision here is trying to solve that one problem.
+
+
+THE FOUNDATION: WHY RAG
+------------------------
+
+Fine-tuning was briefly considered and dropped. It's expensive, it bakes
+knowledge into weights in a way you can't inspect, and it requires a huge
+curated dataset we didn't have. With RAG, you can literally see which passages
+were retrieved for any response. That transparency matters a lot when the whole
+point is grounding answers in Feynman's real ideas.
+
+Source material covers his books, interviews, lectures, and papers, organized
+into subfolders that also feed into the authority weighting system.
+
+
+WHY HYBRID RETRIEVAL (NOT JUST VECTOR SEARCH)
+----------------------------------------------
+
+Pure vector search works great for conceptual questions but falls apart on
+specific ones. Ask about the Challenger O-ring investigation and a dense
+retriever might return passages about temperature or rubber in general, missing
+the exact section where Feynman describes the ice water experiment.
+
+BM25 keyword search handles this. It finds documents containing the exact
+words in your query, no embedding required. Running both in parallel and fusing
+the scores means you get the best of both: semantic understanding for abstract
+questions, precise term matching for specific ones.
+
+
+SENTENCE WINDOWS
+-----------------
+
+Big chunks make embeddings blurry. Small chunks lack context for the LLM.
+
+The fix: index at the sentence level (sharp, focused embeddings) but when a
+sentence is retrieved, pull the 3 sentences before and after it too. The
+retriever stays precise, the LLM gets enough context to actually work with.
+Window size 3 was settled on after some trial and error. Smaller felt choppy,
+larger occasionally dragged in unrelated material.
+
+
+CROSS-ENCODER RERANKING
+------------------------
+
+After hybrid retrieval produces 20 candidates, a cross-encoder model scores
+each one by reading the query and the passage together, not as separate
+vectors. This is much more accurate than bi-encoder similarity but too slow to
+run on thousands of chunks. Running it on just the top 20 is the right
+compromise. In practice it often reshuffles the top 5 noticeably, which
+translates directly to better responses.
+
+
+QUERY REWRITING
+----------------
+
+Multi-turn conversations break naive retrieval. A user asks about QED, Feynman
+responds, and then they ask "why did you use that approach?" The retriever has
+no idea what "that" refers to.
+
+Before retrieval, the system passes the user's message and recent history to
+Gemini, which rewrites the query into a self-contained form. Costs one extra
+LLM call per turn but the improvement in retrieval quality is obvious.
+
+
+THE DUAL MEMORY SYSTEM
+------------------------
+
+Feynman adapted his explanations to who he was talking to. The memory system
+tries to capture this.
+
+JSON profile stores explicit facts: user name, background, a running
+conversation summary. Simple flat file, fully human-readable.
+
+Vector memory stores free-form observations picked up in conversation, things
+that don't fit a schema. These get embedded and retrieved contextually, so
+Feynman can say "given that you're studying physics..." without being told that
+in the current turn.
+
+Facts are extracted automatically after each user message via a lightweight
+Gemini call. The extraction is wrapped in a silent try/except so if it fails,
+the conversation continues without interruption.
+
+At 14 messages, older history gets summarized and compressed. Only the last 4
+messages are kept live. This prevents context window bloat without losing
+continuity.
+
+
+WHAT DIDN'T WORK
+-----------------
+
+Large chunks: embeddings became unfocused and ranked mediocrely for everything
+instead of strongly for anything.
+
+Always overwriting memory: the background field kept getting replaced with
+partial sentences from questions. Fixed by only storing if the field is empty.
+
+No summarization: response quality degraded noticeably past 20 messages.
+Sliding window plus summarization was the simplest fix.
+
+Temperature too low: 0.3 to 0.5 made the persona feel flat. Feynman was not
+robotic. 0.8 ended up being the right balance.
+
+
+A NOTE ON THE RETRIEVAL INSPECTOR
+-----------------------------------
+
+The sidebar debug panel showing rewritten queries, BM25 scores, and reranker
+probabilities was built early and used constantly during development. When a
+response felt off, the first question was always what the retriever actually
+found. The inspector makes that answerable in real time. It also makes the
+system more trustworthy because you can see that responses are grounded in
+real source passages, not generated from thin air.
+
+
+FINAL THOUGHT
+--------------
+
+The quality of Feynman's responses is directly proportional to the quality of
+the documents in data/. The retrieval machinery can only surface what is
+actually there. If responses feel generic, check the inspector first. Nine
+times out of ten it is a retrieval problem, not a prompting one.
+

@@ -1,12 +1,25 @@
 import streamlit as st
 import os
-import json
-import re
 import time
-from pypdf import PdfReader
+import pandas as pd
 import chromadb
-from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
+
+# --- PRODUCTION MODULE IMPORTS ---
+from src.models.clients import get_embedding_model, get_reranker_model
+from src.ingestion.loader import load_data_directory
+from src.ingestion.chunker import HybridChunker
+from src.ingestion.embedder import ingest_chunks_to_chroma
+from src.retrieval.retriever import HybridRetriever
+from src.memory.manager import (
+    load_memory,
+    save_memory,
+    get_user_memory_collection,
+    add_user_vector_memory,
+    retrieve_user_vector_memories,
+    summarize_conversation
+)
+from src.prompts.templates import FEYNMAN_SYSTEM_PROMPT
 
 # --- CONSTANTS & PATHS ---
 DATA_DIR = "./data"
@@ -22,24 +35,22 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Premium Custom CSS (Dark Space / Glassmorphic Theme)
+# Custom CSS for Sleek Dark / Space / Glassmorphic UI
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;600&display=swap');
 
-    /* Global styling */
     html, body, [data-testid="stAppViewContainer"] {
-        background: radial-gradient(circle at top right, #141526, #090a10) !important;
+        background: radial-gradient(circle at top right, #121320, #08090e) !important;
         font-family: 'Outfit', sans-serif !important;
         color: #f1f3f9 !important;
     }
 
     [data-testid="stSidebar"] {
-        background-color: #0b0c11 !important;
-        border-right: 1px solid #1f2839 !important;
+        background-color: #08090d !important;
+        border-right: 1px solid #1a2232 !important;
     }
 
-    /* Headings */
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Space Grotesk', sans-serif !important;
         font-weight: 700 !important;
@@ -52,364 +63,64 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         font-size: 2.8rem;
         font-weight: 800;
-        margin-bottom: 0.2rem;
+        margin-bottom: 0.1rem;
         display: inline-block;
     }
 
     .sub-title {
-        font-size: 1.1rem;
-        color: #8a8f9f;
+        font-size: 1.05rem;
+        color: #838896;
         margin-bottom: 2rem;
     }
 
-    /* Chat Messages styling */
     .stChatMessage {
         border-radius: 16px !important;
-        padding: 1.2rem !important;
+        padding: 1.1rem !important;
         margin-bottom: 1rem !important;
         background: rgba(255, 255, 255, 0.02) !important;
         border: 1px solid rgba(255, 255, 255, 0.04) !important;
-        backdrop-filter: blur(12px) !important;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+        backdrop-filter: blur(10px) !important;
     }
 
-    /* User Message distinct style */
     div[data-testid="stChatMessageUser"] {
-        background: rgba(0, 210, 255, 0.06) !important;
-        border: 1px solid rgba(0, 210, 255, 0.15) !important;
+        background: rgba(0, 210, 255, 0.05) !important;
+        border: 1px solid rgba(0, 210, 255, 0.12) !important;
     }
 
-    /* Assistant Message distinct style */
     div[data-testid="stChatMessageAssistant"] {
-        background: rgba(155, 81, 224, 0.06) !important;
-        border: 1px solid rgba(155, 81, 224, 0.15) !important;
+        background: rgba(155, 81, 224, 0.05) !important;
+        border: 1px solid rgba(155, 81, 224, 0.12) !important;
     }
 
-    /* Memory visual cards */
     .memory-box {
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid #282a36;
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        background: rgba(255, 255, 255, 0.01);
+        border: 1px solid #1c2333;
+        border-radius: 10px;
+        padding: 0.8rem;
+        margin-bottom: 0.8rem;
     }
     
     .memory-title {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         color: #00d2ff;
         font-weight: 600;
         text-transform: uppercase;
-        margin-bottom: 0.5rem;
-        letter-spacing: 0.05em;
+        margin-bottom: 0.3rem;
+        letter-spacing: 0.04em;
     }
     
     .memory-content {
-        font-size: 0.95rem;
-        color: #e2e8f0;
+        font-size: 0.9rem;
+        color: #cbd5e1;
     }
 
-    /* Expanders styling */
     .stExpander {
-        border: 1px solid rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.04) !important;
         background: rgba(0,0,0,0.1) !important;
-        border-radius: 8px !important;
-    }
-
-    /* Buttons */
-    .stButton>button {
-        border-radius: 8px !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        background-color: rgba(255, 255, 255, 0.05) !important;
-        color: #f1f3f9 !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .stButton>button:hover {
-        background: linear-gradient(135deg, #00d2ff, #9b51e0) !important;
-        border-color: transparent !important;
-        box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3) !important;
+        border-radius: 10px !important;
     }
 </style>
 """, unsafe_allow_html=True)
-
-
-# --- CACHED RESOURCES ---
-
-@st.cache_resource
-def get_embedder():
-    """Loads and caches the local embedding model."""
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-@st.cache_resource
-def get_chroma_client():
-    """Initializes and caches the persistent ChromaDB client."""
-    return chromadb.PersistentClient(path=CHROMA_DB_PATH)
-
-def get_collection(client):
-    """Retrieves or creates the feynman collection."""
-    return client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}
-    )
-
-
-# --- HELPERS: MEMORY SYSTEM ---
-
-def load_memory():
-    """Loads the long-term memory from local JSON file."""
-    if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
-        "user_name": None,
-        "user_background": None,
-        "topics_discussed": [],
-        "interesting_facts_about_user": []
-    }
-
-def save_memory(memory):
-    """Saves the long-term memory to local JSON file."""
-    os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
-    with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(memory, f, indent=2, ensure_ascii=False)
-
-def format_memory(memory):
-    """Formats memory into bullet points for the system prompt."""
-    lines = []
-    if memory.get("user_name"):
-        lines.append(f"- Their name is {memory['user_name']}.")
-    if memory.get("user_background"):
-        lines.append(f"- Background: {memory['user_background']}.")
-    if memory.get("topics_discussed"):
-        topics = ", ".join(memory["topics_discussed"][-5:])
-        lines.append(f"- We've talked about: {topics}.")
-    if memory.get("interesting_facts_about_user"):
-        for fact in memory["interesting_facts_about_user"][-5:]:
-            lines.append(f"- {fact}")
-    return "\n".join(lines) if lines else "I don't know this person yet."
-
-def extract_name_directly(user_message):
-    """Regex-based name extractor to avoid unnecessary API calls."""
-    patterns = [
-        r"my name is (\w+)",
-        r"i(?:'m| am) (\w+)",
-        r"call me (\w+)",
-        r"name'?s? (\w+)",
-        r"actually (?:my name is )?(\w+)",
-        r"it(?:'s| is) (\w+)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, user_message.lower())
-        if match:
-            name = match.group(1).capitalize()
-            if name.lower() not in ["a", "an", "the", "not", "just", "still", "actually", "physics", "student"]:
-                return name
-    return None
-
-def extract_and_save_memory(user_message, memory):
-    """Extracts facts from a message and updates the local JSON memory."""
-    # 1. Check for name using regex first
-    name = extract_name_directly(user_message)
-    updated = False
-    if name:
-        memory["user_name"] = name
-        updated = True
-    
-    # 2. Extract facts/background via Gemini if API key is active
-    if st.session_state.get("api_key"):
-        extraction_prompt = f"""
-From this user message, extract any personal facts about the USER (such as their name, job/major, background, interests, or topics they want to discuss).
-Return JSON only, no markdown, no code blocks, no extra text:
-{{
-  "user_name": null or string,
-  "user_background": null or string,
-  "new_fact": null or string,
-  "topic": null or string
-}}
-
-User message: {user_message}
-"""
-        try:
-            genai.configure(api_key=st.session_state.api_key)
-            extractor = genai.GenerativeModel("gemini-2.5-flash")
-            response = extractor.generate_content(extraction_prompt)
-            clean_text = response.text.replace("```json", "").replace("```", "").strip()
-            facts = json.loads(clean_text)
-            
-            if facts.get("user_name") and not memory.get("user_name"):
-                memory["user_name"] = facts["user_name"]
-                updated = True
-            if facts.get("user_background"):
-                memory["user_background"] = facts["user_background"]
-                updated = True
-            if facts.get("new_fact"):
-                if facts["new_fact"] not in memory["interesting_facts_about_user"]:
-                    memory["interesting_facts_about_user"].append(facts["new_fact"])
-                    updated = True
-            if facts.get("topic"):
-                if facts["topic"] not in memory["topics_discussed"]:
-                    memory["topics_discussed"].append(facts["topic"])
-                    updated = True
-        except Exception:
-            pass  # Fail silently to avoid breaking the chat experience
-
-    if updated:
-        save_memory(memory)
-    return memory
-
-
-# --- HELPERS: RAG INGESTION & RETRIEVAL ---
-
-def chunk_text(text, source, chunk_size=800, overlap=100):
-    """Chunks text into small segments with an overlap."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
-        if len(chunk.strip()) > 100:  # skip tiny chunks
-            chunks.append({"text": chunk.strip(), "source": source})
-        start += chunk_size - overlap
-    return chunks
-
-def ingest_corpus(embedder, collection):
-    """Walks the data folder, chunks PDFs and text files, embeds them and writes to ChromaDB."""
-    if not os.path.exists(DATA_DIR):
-        st.error(f"Data directory not found at `{DATA_DIR}`. Please make sure the folder exists.")
-        return False
-
-    status_placeholder = st.empty()
-    progress_bar = st.progress(0.0)
-    
-    status_placeholder.info("Scanning directories and loading files...")
-    
-    raw_documents = []
-    
-    # 1. Read files
-    for root, dirs, files in os.walk(DATA_DIR):
-        for file in files:
-            path = os.path.join(root, file)
-            source = file
-            try:
-                if file.endswith('.pdf'):
-                    reader = PdfReader(path)
-                    text = ""
-                    for page in reader.pages:
-                        text += page.extract_text() or ""
-                    if len(text.strip()) > 0:
-                        raw_documents.append({"text": text, "source": source})
-                elif file.endswith('.txt'):
-                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                        text = f.read()
-                    if len(text.strip()) > 0:
-                        raw_documents.append({"text": text, "source": source})
-            except Exception as e:
-                st.warning(f"Failed to read `{file}`: {e}")
-
-    if not raw_documents:
-        status_placeholder.error("No valid documents (PDF or TXT) found in data directories.")
-        return False
-
-    # 2. Chunk documents
-    status_placeholder.info(f"Chunking {len(raw_documents)} documents...")
-    all_chunks = []
-    for doc in raw_documents:
-        chunks = chunk_text(doc["text"], doc["source"])
-        all_chunks.extend(chunks)
-
-    if not all_chunks:
-        status_placeholder.error("Chunking resulted in 0 valid chunks.")
-        return False
-
-    # 3. Add to Chroma in batches
-    status_placeholder.info(f"Generated {len(all_chunks)} chunks. Embedding and storing locally...")
-    BATCH_SIZE = 50
-    total_chunks = len(all_chunks)
-    
-    for i in range(0, total_chunks, BATCH_SIZE):
-        batch = all_chunks[i:i+BATCH_SIZE]
-        texts = [c["text"] for c in batch]
-        sources = [c["source"] for c in batch]
-        ids = [str(i + j) for j in range(len(batch))]
-        
-        # Embed
-        embeddings = embedder.encode(texts, show_progress_bar=False).tolist()
-        
-        # Store in ChromaDB
-        collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=[{"source": s} for s in sources]
-        )
-        
-        progress = min((i + BATCH_SIZE) / total_chunks, 1.0)
-        progress_bar.progress(progress)
-        status_placeholder.info(f"Ingested {min(i + BATCH_SIZE, total_chunks)} / {total_chunks} chunks...")
-
-    progress_bar.empty()
-    status_placeholder.success(f"Successfully loaded {total_chunks} vector chunks into ChromaDB!")
-    return True
-
-def retrieve(query, embedder, collection, top_k=4):
-    """Embeds the query and fetches the top-k matched documents."""
-    if collection.count() == 0:
-        return [], []
-    
-    query_embedding = embedder.encode([query]).tolist()[0]
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k
-    )
-    
-    chunks = results["documents"][0] if results["documents"] else []
-    sources = [m["source"] for m in results["metadatas"][0]] if results["metadatas"] else []
-    return chunks, sources
-
-
-# --- SYSTEM PROMPT TEMPLATE ---
-
-FEYNMAN_PROMPT = """You are Richard P. Feynman — Nobel Prize-winning physicist (1965),
-professor at Caltech, bongo drummer, safe-cracker, and one of the greatest
-science communicators who ever lived. You died in February 1988.
-
-== YOUR PERSONALITY ==
-- You are infectiously curious. You find genuine joy in figuring things out.
-- You deeply distrust pompous language and unnecessary jargon. Explain things with radical simplicity.
-- You are playful and mischievous — you love jokes, bongos, and personal stories.
-- You are brutally honest. You say "I don't know" when you don't know.
-- You believe the pleasure of finding things out is life's greatest joy.
-
-== HOW YOU SPEAK ==
-- You say things like "You see...", "Now here's the thing...", "What do we actually mean by that?", "Let me put it this way..."
-- You build understanding from FIRST PRINCIPLES, not memorized facts.
-- You use analogies from everyday life constantly.
-- You get visibly excited when a question is genuinely interesting.
-- You occasionally go on tangents before returning to the point.
-
-== YOUR EXPERTISE ==
-- Quantum electrodynamics (QED) — your Nobel Prize work
-- Path integral formulation of quantum mechanics (sum over histories)
-- The Feynman Lectures on Physics
-- Nanotechnology ("There's Plenty of Room at the Bottom")
-- Superfluidity and liquid helium
-- The Challenger disaster investigation (1986)
-- Safe-cracking, bongo drums, sketching
-
-== STRICT RULES ==
-- NEVER break character. You are always Feynman.
-- If asked about events after 1988, say you don't know.
-- When using retrieved context, speak it naturally as your own thoughts. Do not cite papers directly in text.
-- Never say "As an AI" or anything that breaks the illusion.
-- If you don't know something, say so with curiosity.
-
-== WHAT YOU KNOW ABOUT THIS PERSON ==
-{long_term_memory}
-"""
 
 
 # --- APP STATE INITIALIZATION ---
@@ -420,23 +131,37 @@ if "messages" not in st.session_state:
 if "memory" not in st.session_state:
     st.session_state.memory = load_memory()
 
-# Attempt to load API key from environment
 if "api_key" not in st.session_state:
     st.session_state.api_key = os.environ.get("GEMINI_API_KEY", "")
 
-
-# --- MODEL AND DB SETUP ---
-
-# Load Embedder & DB client
-embedder = get_embedder()
-chroma_client = get_chroma_client()
-collection = get_collection(chroma_client)
+# Debug panel logs
+if "last_debug_records" not in st.session_state:
+    st.session_state.last_debug_records = None
+if "last_rewritten_query" not in st.session_state:
+    st.session_state.last_rewritten_query = None
 
 
-# --- SIDEBAR: CONTROLS & MEMORY ---
+# --- MODELS & DB INITIALIZATION ---
+
+embedder = get_embedding_model()
+reranker = get_reranker_model()
+chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+collection = chroma_client.get_or_create_collection(
+    name=COLLECTION_NAME,
+    metadata={"hnsw:space": "cosine"}
+)
+user_memory_collection = get_user_memory_collection(chroma_client)
+
+# Cache HybridRetriever in st.session_state to avoid rebuilding BM25 index on every rerun
+if "retriever" not in st.session_state or st.session_state.get("_rebuild_triggered"):
+    st.session_state.retriever = HybridRetriever(collection, embedder, reranker)
+    st.session_state._rebuild_triggered = False
+
+
+# --- SIDEBAR: SETTINGS, MEMORY & RETRIEVAL INSPECTOR ---
 
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/en/4/42/Richard_Feynman_Nobel.jpg", width=120)
+    st.image("https://upload.wikimedia.org/wikipedia/en/4/42/Richard_Feynman_Nobel.jpg", width=110)
     st.title("Feynman Settings")
     st.write("---")
 
@@ -453,133 +178,237 @@ with st.sidebar:
 
     st.write("---")
 
-    # Database Ingestion panel
+    # Vector store status & ingestion controls
     db_count = collection.count()
     st.subheader("📚 Knowledge Base")
     if db_count > 0:
-        st.success(f"ChromaDB Loaded: **{db_count}** vectors")
-        if st.button("Rebuild Database"):
-            # Clear old collection
+        st.success(f"ChromaDB Active: **{db_count}** vectors")
+        if st.button("Rebuild Vector DB"):
             try:
                 chroma_client.delete_collection(COLLECTION_NAME)
-                collection = get_collection(chroma_client)
+                collection = chroma_client.get_or_create_collection(
+                    name=COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"}
+                )
             except Exception:
                 pass
             
-            with st.spinner("Rebuilding database..."):
-                if ingest_corpus(embedder, collection):
-                    st.success("Database rebuilt!")
+            with st.spinner("Parsing data directory and extracting pages..."):
+                docs = load_data_directory(DATA_DIR)
+                if docs:
+                    st.info(f"Loaded {len(docs)} document pages. Chunking into sentence windows...")
+                    chunker = HybridChunker(window_size=3)
+                    chunks = chunker.chunk_all(docs)
+                    st.info(f"Ingesting {len(chunks)} chunks into ChromaDB manually...")
+                    added = ingest_chunks_to_chroma(chunks, embedder, collection)
+                    st.success(f"Successfully added {added} new vector chunks!")
+                    
+                    # Force rebuild retriever BM25
+                    st.session_state._rebuild_triggered = True
                     time.sleep(1)
                     st.rerun()
+                else:
+                    st.error("No documents found in data directory.")
     else:
-        st.warning("Database empty. Ingestion required.")
+        st.warning("Knowledge base is empty.")
         if st.button("🚀 Ingest Data Directory"):
-            with st.spinner("Processing data documents..."):
-                if ingest_corpus(embedder, collection):
-                    st.success("Ingestion complete!")
+            with st.spinner("Loading documents..."):
+                docs = load_data_directory(DATA_DIR)
+                if docs:
+                    chunker = HybridChunker(window_size=3)
+                    chunks = chunker.chunk_all(docs)
+                    added = ingest_chunks_to_chroma(chunks, embedder, collection)
+                    st.success(f"Successfully loaded {added} vectors!")
+                    
+                    st.session_state._rebuild_triggered = True
                     time.sleep(1)
                     st.rerun()
+                else:
+                    st.error("Please place PDF/TXT files inside data/ subdirectories.")
 
     st.write("---")
 
-    # Interactive Memory Visualizer
-    st.subheader("🧠 Long-Term Memory")
-    st.markdown("<p style='font-size:0.85rem; color:#8a8f9f;'>What Feynman remembers about you across sessions. You can edit these live.</p>", unsafe_allow_html=True)
+    # Interactive Memory Dashboard (Updates JSON memory live)
+    st.subheader("🧠 Memory Dashboard")
+    mem = st.session_state.memory
     
-    m_name = st.text_input("Name", value=st.session_state.memory.get("user_name") or "")
-    m_bg = st.text_input("Background", value=st.session_state.memory.get("user_background") or "")
+    m_name = st.text_input("User Name", value=mem["profile"].get("name") or "")
+    m_bg = st.text_input("User Background", value=mem["profile"].get("background") or "")
     
-    # Save manual corrections
-    if m_name != st.session_state.memory.get("user_name") or m_bg != st.session_state.memory.get("user_background"):
-        st.session_state.memory["user_name"] = m_name if m_name.strip() else None
-        st.session_state.memory["user_background"] = m_bg if m_bg.strip() else None
-        save_memory(st.session_state.memory)
-        st.toast("Memory updated!")
+    if m_name != mem["profile"].get("name") or m_bg != mem["profile"].get("background"):
+        mem["profile"]["name"] = m_name if m_name.strip() else None
+        mem["profile"]["background"] = m_bg if m_bg.strip() else None
+        save_memory(mem)
+        st.toast("Profile updated!")
 
-    # Display facts
-    facts_list = st.session_state.memory.get("interesting_facts_about_user") or []
+    # Display facts and Vector Memory count
+    v_mem_count = user_memory_collection.count()
+    st.write(f"Vector Memories Stored: **{v_mem_count}**")
+    
+    facts_list = mem.get("important_facts", [])
     if facts_list:
-        st.markdown("<div class='memory-title'>Facts Recalled:</div>", unsafe_allow_html=True)
-        for i, fact in enumerate(facts_list):
+        st.markdown("<div class='memory-title'>Extracted Facts:</div>", unsafe_allow_html=True)
+        for i, fact in enumerate(facts_list[-4:]):
             st.markdown(f"<div class='memory-box'><div class='memory-content'>• {fact}</div></div>", unsafe_allow_html=True)
 
     # Actions
-    if st.button("Clear Long-term Memory"):
-        st.session_state.memory = {
-            "user_name": None,
-            "user_background": None,
-            "topics_discussed": [],
-            "interesting_facts_about_user": []
-        }
-        save_memory(st.session_state.memory)
-        st.toast("Long-term memory wiped!")
-        time.sleep(0.5)
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Wipe Memory", use_container_width=True):
+            st.session_state.memory = {
+                "profile": {"name": None, "background": None},
+                "preferences": {},
+                "important_facts": [],
+                "conversation_summary": ""
+            }
+            save_memory(st.session_state.memory)
+            # Wipe user memory Chroma collection
+            try:
+                chroma_client.delete_collection("user_memory")
+            except Exception:
+                pass
+            st.toast("Memory cleared!")
+            time.sleep(0.5)
+            st.rerun()
+    with col2:
+        if st.button("Wipe Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.toast("Chat wiped!")
+            time.sleep(0.5)
+            st.rerun()
 
-    if st.button("Wipe Chat History"):
-        st.session_state.messages = []
-        st.toast("Chat history cleared!")
-        time.sleep(0.5)
-        st.rerun()
+    st.write("---")
+
+    # --- RETRIEVAL INSPECTOR (DEBUG PANEL) ---
+    st.subheader("🔍 Retrieval Inspector")
+    if st.session_state.last_debug_records:
+        st.write(f"**Rewritten Query:**")
+        st.info(st.session_state.last_rewritten_query)
+        
+        # Build Dataframe of top retrieved sources
+        df_records = []
+        for r in st.session_state.last_debug_records:
+            df_records.append({
+                "Rank": r["rank"],
+                "Source": f"{r['source']} (p. {r['page']})",
+                "Domain": r["domain"],
+                "Authority": f"{r['source_authority']:.2f}",
+                "Dense (Similarity)": f"{r['dense_score']/r['source_authority']:.4f}",
+                "Sparse (BM25)": f"{r['bm25_score']:.4f}",
+                "Hybrid Score": f"{r['hybrid_score']:.4f}",
+                "Reranker (Prob)": f"{r['reranker_score']:.4f}"
+            })
+        df = pd.DataFrame(df_records).set_index("Rank")
+        st.dataframe(df, use_container_width=True)
+        
+        # Display top window
+        st.write("**Top Window Context:**")
+        st.caption(st.session_state.last_debug_records[0]["window"])
+    else:
+        st.write("No search records. Start chatting to inspect retrieval details.")
 
 
 # --- MAIN AREA ---
 
-# Title
 st.markdown("<div class='main-title'>Richard Feynman Digital Twin</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub-title'>Ask me anything about physics, QED, bongo drumming, or Challenger. Grounded in my papers, lectures, and books.</div>", unsafe_allow_html=True)
+st.markdown("<div class='sub-title'>Ask me anything about physics, QED, teaching, or my personal stories. Powered by a production-grade Hybrid RAG system.</div>", unsafe_allow_html=True)
 
-# 1. API Key Alert
+# Checks
 if not st.session_state.api_key:
-    st.info("🔑 **Please enter your Gemini API Key in the sidebar to start chatting.**\nIf you don't have one, get a free key from [Google AI Studio](https://aistudio.google.com/).")
+    st.info("🔑 **Please enter your Gemini API Key in the sidebar to begin.**")
     st.stop()
 
-# 2. Empty DB Alert
-if collection.count() == 0:
-    st.warning("⚠️ **Your local knowledge base is empty.** Please click the **'Ingest Data Directory'** button in the sidebar to load Feynman's writings into the database.")
+if db_count == 0:
+    st.warning("⚠️ **Vector database is currently empty.** Click **'Ingest Data Directory'** in the sidebar to process document folders.")
     st.stop()
 
-# 3. Render Historical Messages
+# Summarize history if too long to keep context compact
+# Limit history to 14 messages (7 turns) to trigger summary
+if len(st.session_state.messages) >= 14:
+    with st.spinner("Summarizing older parts of conversation..."):
+        recent_history = st.session_state.messages[:-4]
+        summary = summarize_conversation(recent_history, st.session_state.api_key, st.session_state.memory.get("conversation_summary", ""))
+        st.session_state.memory["conversation_summary"] = summary
+        save_memory(st.session_state.memory)
+        
+        # Keep only the summary and the last 4 messages
+        st.session_state.messages = st.session_state.messages[-4:]
+        st.toast("Conversation compacted!")
+
+# Render Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        # Render retrieved sources for model messages if present
         if msg["role"] == "assistant" and "sources" in msg and msg["sources"]:
-            with st.expander("📚 Grounding Sources Retrieved", expanded=False):
-                for src_idx, (chunk, src_file) in enumerate(zip(msg["sources"]["chunks"], msg["sources"]["files"]), 1):
-                    st.markdown(f"**Source {src_idx}**: `{src_file}`")
-                    st.markdown(f"*{chunk.strip()}*")
+            with st.expander("📚 Grounding Excerpts (Sentence Windows)", expanded=False):
+                for idx, (win, title, page) in enumerate(zip(msg["sources"]["windows"], msg["sources"]["titles"], msg["sources"]["pages"]), 1):
+                    st.markdown(f"**Source {idx}**: `{title}` (Page {page})")
+                    st.markdown(f"*{win.strip()}*")
                     st.write("---")
 
-# 4. Chat Input
-user_input = st.chat_input("Ask Feynman a question...")
+# User Input
+user_input = st.chat_input("Explain something to me, Richard...")
 
 if user_input:
-    # Render and store user message
+    # 1. Render and store user message
     with st.chat_message("user"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
     
-    # Render assistant placeholder & spinner
+    # 2. Render Assistant response block
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         sources_placeholder = st.empty()
         
-        with st.spinner("Feynman is thinking..."):
+        with st.spinner("Connecting ideas..."):
             try:
-                # A. Retrieve RAG chunks
-                chunks, sources = retrieve(user_input, embedder, collection, top_k=4)
-                context = "\n\n---\n\n".join(chunks) if chunks else "No reference text matched."
+                # A. Query Expansion / Rewriting
+                rewritten_query = st.session_state.retriever.rewrite_query(
+                    user_input, 
+                    st.session_state.messages, 
+                    st.session_state.api_key
+                )
+                st.session_state.last_rewritten_query = rewritten_query
                 
-                # B. Build augmented prompt
-                augmented_message = f"Relevant excerpts from your writings:\n{context}\n\n---\nUser: {user_input}"
+                # B. Hybrid Retrieval (BM25 + Dense vector + Source Authority + Reranker)
+                retrieved_windows, debug_records = st.session_state.retriever.retrieve(
+                    rewritten_query, 
+                    top_k=5
+                )
+                st.session_state.last_debug_records = debug_records
                 
-                # C. Build system prompt using current memory
-                system_instruction = FEYNMAN_PROMPT.format(
-                    long_term_memory=format_memory(st.session_state.memory)
+                # C. User Vector Memory Retrieval
+                user_memories = retrieve_user_vector_memories(
+                    chroma_client, 
+                    embedder, 
+                    rewritten_query, 
+                    top_k=2
                 )
                 
-                # D. Configure client
+                # D. Merge memory details (JSON profile + vector memory)
+                memory_profile = st.session_state.memory
+                explicit_facts = []
+                if memory_profile["profile"].get("name"):
+                    explicit_facts.append(f"- Name: {memory_profile['profile']['name']}")
+                if memory_profile["profile"].get("background"):
+                    explicit_facts.append(f"- Background: {memory_profile['profile']['background']}")
+                if memory_profile.get("conversation_summary"):
+                    explicit_facts.append(f"- Summary of discussion so far: {memory_profile['conversation_summary']}")
+                
+                # Add vector memories
+                for mem_text in user_memories:
+                    explicit_facts.append(f"- Memory recall: {mem_text}")
+                    
+                user_mem_str = "\n".join(explicit_facts) if explicit_facts else "No context about this user is known yet."
+                
+                # E. Build System Prompt using template
+                context_str = "\n\n---\n\n".join(retrieved_windows) if retrieved_windows else "No direct passages found."
+                system_instruction = FEYNMAN_SYSTEM_PROMPT.format(
+                    retrieved_context=context_str,
+                    user_memories=user_mem_str
+                )
+                
+                # F. Invoke Gemini 2.5 Flash
                 genai.configure(api_key=st.session_state.api_key)
                 model = genai.GenerativeModel(
                     model_name="gemini-2.5-flash",
@@ -587,52 +416,93 @@ if user_input:
                     generation_config=genai.GenerationConfig(temperature=0.8)
                 )
                 
-                # E. Build rolling chat history (last 20 items)
-                # Map st.session_state.messages to the model's history format
+                # Map session messages to Gemini formats
                 model_history = []
-                # Only include the last 18 messages from state to leave room for current augmented message
-                recent_messages = st.session_state.messages[-18:] if len(st.session_state.messages) > 18 else st.session_state.messages
+                # Take recent turns to fit model instruction limits
+                recent_messages = st.session_state.messages[-10:] if len(st.session_state.messages) > 10 else st.session_state.messages
                 
-                for past_msg in recent_messages[:-1]: # exclude the latest user message which we will replace with the augmented one
-                    role = "user" if past_msg["role"] == "user" else "model"
-                    model_history.append({"role": role, "parts": [past_msg["content"]]})
+                for past in recent_messages[:-1]:
+                    role = "user" if past["role"] == "user" else "model"
+                    model_history.append({"role": role, "parts": [past["content"]]})
                 
-                # Add the current message as augmented
-                model_history.append({"role": "user", "parts": [augmented_message]})
+                # Add augmented user query at the end
+                augmented_query = f"Conversation context and retrieved writings are preloaded. Answer this query in character:\nUser: {user_input}"
+                model_history.append({"role": "user", "parts": [augmented_query]})
                 
-                # F. Generate response
+                # G. Generate content
                 response = model.generate_content(model_history)
                 reply = response.text
                 
-                # G. Render response
+                # H. Render response
                 response_placeholder.markdown(reply)
                 
-                # H. Render source files retrieved
-                source_record = None
-                if sources:
-                    source_record = {"chunks": chunks, "files": sources}
-                    with sources_placeholder.expander("📚 Grounding Sources Retrieved", expanded=False):
-                        for src_idx, (chunk, src_file) in enumerate(zip(chunks, sources), 1):
-                            st.markdown(f"**Source {src_idx}**: `{src_file}`")
-                            st.markdown(f"*{chunk.strip()}*")
+                # I. Render sources expander
+                src_record = None
+                if debug_records:
+                    src_record = {
+                        "windows": [c["window"] for c in debug_records],
+                        "titles": [c["title"] for c in debug_records],
+                        "pages": [c["page"] for c in debug_records]
+                    }
+                    
+                    with sources_placeholder.expander("📚 Grounding Excerpts (Sentence Windows)", expanded=False):
+                        for idx, record in enumerate(debug_records, 1):
+                            st.markdown(f"**Source {idx}**: `{record['title']}` (Page {record['page']})")
+                            st.markdown(f"*{record['window'].strip()}*")
                             st.write("---")
-                
-                # I. Save reply to session state
+                            
+                # J. Save assistant message to state
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": reply,
-                    "sources": source_record
+                    "sources": src_record
                 })
                 
-                # J. Extract facts asynchronously/synchronously and save memory
-                st.session_state.memory = extract_and_save_memory(user_input, st.session_state.memory)
+                # K. Memory extraction on the user's turn
+                # Query Gemini to extract facts
+                extraction_prompt = f"""
+From this user message, extract any personal facts about the USER (such as their name, job/major, background, interests, or topics they want to discuss).
+Return JSON only, no markdown, no code blocks, no extra text:
+{{
+  "user_name": null or string,
+  "user_background": null or string,
+  "new_fact": null or string
+}}
+
+User message: {user_input}
+"""
+                try:
+                    extractor = genai.GenerativeModel("gemini-2.5-flash")
+                    ext_res = extractor.generate_content(extraction_prompt)
+                    clean_text = ext_res.text.replace("```json", "").replace("```", "").strip()
+                    facts = json.loads(clean_text)
+                    
+                    updated_memory = False
+                    if facts.get("user_name") and not st.session_state.memory["profile"].get("name"):
+                        st.session_state.memory["profile"]["name"] = facts["user_name"]
+                        updated_memory = True
+                    if facts.get("user_background") and not st.session_state.memory["profile"].get("background"):
+                        st.session_state.memory["profile"]["background"] = facts["user_background"]
+                        updated_memory = True
+                    if facts.get("new_fact"):
+                        fact_text = facts["new_fact"]
+                        if fact_text not in st.session_state.memory["important_facts"]:
+                            st.session_state.memory["important_facts"].append(fact_text)
+                            updated_memory = True
+                            
+                            # Add to User Vector Memory in ChromaDB
+                            add_user_vector_memory(chroma_client, embedder, fact_text)
+                            
+                    if updated_memory:
+                        save_memory(st.session_state.memory)
+                except Exception:
+                    pass  # Fail memory extraction silently to avoid breaking experience
                 
             except Exception as e:
                 response_placeholder.error(f"Error generating response: {e}")
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"Sorry, I ran into an error trying to think about that: {e}"
+                    "content": f"Sorry, I had a bit of a glitch in my bongo logic: {e}"
                 })
-    
-    # Rerun to refresh the sidebar memory metrics and updates
+                
     st.rerun()

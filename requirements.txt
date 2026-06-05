@@ -4,3 +4,5 @@ sentence-transformers
 pypdf
 langchain
 streamlit
+pymupdf
+rank-bm25
